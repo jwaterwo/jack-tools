@@ -1,14 +1,14 @@
 #!/bin/bash -   
 ## title          : seqno_extractor.bsh
 ## description    : pulls metadata from out of dd dumps
-## author         : Jack Waterworth [jack@redhat.com]
+## author         : Jack Waterworth [jwaterworth@gmail.com]
 ## date           : 20150811
 ## version        : 1
 ## usage          : ./seqno_extractor.bsh <filename>
 ## notes          :        
 ## bash_version   : 4.2.47(1)-release
 ## project        : jack-tools
-## gitlab_url     : https://gitlab.cee.redhat.com/jack/jack-tools
+## gitlab_url     : https://github.com/jwaterwo/jack-tools
 ##============================================================================
 #
 # LVM defines its storage by utilizing on-disk metadata.  Each Phsyical Volume
