@@ -1,0 +1,170 @@
+#!/bin/bash -   
+## title          : seqno_extractor.bsh
+## description    : pulls metadata from out of dd dumps
+## author         : Jack Waterworth [jack@redhat.com]
+## date           : 20150811
+## version        : 1
+## usage          : ./seqno_extractor.bsh <filename>
+## notes          :        
+## bash_version   : 4.2.47(1)-release
+## project        : jack-tools
+## gitlab_url     : https://gitlab.cee.redhat.com/jack/jack-tools
+##============================================================================
+#
+# LVM defines its storage by utilizing on-disk metadata.  Each Phsyical Volume
+# within a volume group contains a copy of this data (by default) in a 
+# circular buffer. this means that several versions of the metadata are stored
+# here and can be used if the metadata ever needs to be restored.
+#
+# Looking at this data has always had to be done by hand by somebody who is 
+# expereinced with looking at raw LVM metadata... not anymore.
+#
+# seqno_extractor is a script I wrote that will run through a dump of a disk
+# header and pull out all of the versions of metadata in finds. Each sequence
+# of metadata (version) is pulled out and created in a new file, named by the
+# Volume Group name, followed by the seqno. One file is created per seqno
+# found.
+#
+# For example:
+# vg_rhel6.seqno34
+#
+# To get the data needed for this script to run, you'll need to capture the
+# metadata.  Usually the metadata area is small, and can be captured within
+# the first 10MB. However, metadta area size is configurable. So I recommend
+# capturing the size of the metadata on the disk first:
+#
+#     # pvs -o devices,pv_mda_size
+# 
+# once the size is known, the dump file can be captured by running the
+# following command: (warning, dd can be a dangerous tool)
+#
+#    # dd of=/tmp/dump.dd if=/dev/DEVICE bs=1M count=SIZE_IN_MB
+#
+# of course, replace DEVICE with the device used as the PV, the SIZE_IN_MB
+# with the size of the metadata area
+#
+# Once you have this file, you can run this script against the dump
+#
+#    # seqno_extractor.bsh /tmp/dump.dd
+#
+# This will create the files needed.
+#
+# At this time, the metadata is NOT formatted. You'll need to manually fix
+# up any metadata that you want to restore back to the header.  Once it is
+# fixed up, you can restore the metadata with the following command
+#
+#    # vgcfgrestore -f vgname.seqno# vgname
+#
+# Any feedback is welcomed. Please submit an issue to the gitlab page
+# listed in the header of this file
+
+PRINT(){
+    echo "[-] $@"
+}
+
+FILE_EXISTS(){
+    # check to see if passed variable is a file and that it exists
+    local FILE=$1
+
+    [[ ! -f $FILE ]] \
+	&& return 1
+
+    return 0
+}
+
+GET_VG_NAME(){
+    # figure out the VGname of the metadata entry
+    local METADATA_FILE=$1
+    grep seqno $METADATA_FILE -m1 -B2 | head -1 | cut -d' ' -f1
+}
+
+GET_PVLABEL_POS(){
+    # takes filename as argument and looks for LABELONE
+    local FILENAME=$1
+
+    # use hexdump to grab the PVLABEL startare
+    PV_LABEL=$(hexdump -C $FILENAME | grep LABELONE -m1)
+    PV_LABEL_START_HEX=0x$(echo $PV_LABEL | awk '{print $1}')
+    PV_LABEL_START_DEC=$(( $PV_LABEL_START_HEX ))
+    PV_LABEL_START_SEC=$(( $PV_LABEL_START_DEC / 512 ))
+    PV_LABEL_OFFSET=$(echo $PV_LABEL | awk '{print $10}')
+    PV_LABEL_START_SEC_WITH_OFFSET=$(( $PV_LABEL_START_SEC - $PV_LABEL_OFFSET ))
+
+    # return the result
+    echo $PV_LABEL_START_SEC_WITH_OFFSET
+}
+
+CREATE_DIR(){
+    local DIRECTORY=$1
+
+    mkdir -p $1
+}
+
+FILENAME=$1
+
+! FILE_EXISTS $FILENAME && {
+        PRINT "file not found. exiting"
+        exit
+    }
+
+! FILE_EXISTS $FILENAME.strings && {
+        PRINT "creating strings file $FILENAME.strings"
+        strings -1 $FILENAME > $FILENAME.strings
+    }
+
+! FILE_EXISTS $FILENAME.strings && {
+        PRINT "unable to find strings file. exiting"
+        exit
+    }
+
+PV_LABEL_POS=$(GET_PVLABEL_POS $FILENAME)
+[[ "$PV_LABEL_POS" -gt "-1" ]] && {
+        [[ "$PV_LABEL_POS" -gt "0" ]] && \
+            PRINT "PVLABEL detected at sector $PV_LABEL_POS"
+
+        [[ "$PV_LABEL_POS" == "0" ]] && \
+            PRINT "PVLABEL detected on raw disk"
+    }
+
+VGNAME=$(GET_VG_NAME $FILENAME.strings)
+
+[[ -z $VGNAME ]] && {
+        PRINT "Volume Group name not detected"
+        PRINT "Metadata too corrupted to continue."
+        exit 1
+    }
+
+PRINT "detected volume group: $VGNAME"
+
+# gather all seqnos
+PRINT "scanning for available seqno"
+grep "^seqno = [0-9]" $FILENAME.strings > seqno_file
+
+# PRINT highest seqno
+PRINT "highest seqno detected is $(sort seqno_file -rnk3 | head -1 | awk '{print $3}')"
+
+PRINT "extracting metadata per seqno"
+
+# set Internal Field Seperator to newline
+OLD_IFS=$IFS
+IFS=$'\n'
+
+for SEQNO in $(cat seqno_file); do
+    SEQNO_NUMBER=$(echo $SEQNO | awk '{print $NF}')
+    echo -en "$SEQNO_NUMBER\r"
+    CREATE_DIR $VGNAME
+    [[ $? != "0" ]] && {
+        PRINT "failure creating directory $VGNAME for seqno $SEQNO"
+	break
+    }
+    grep "^$SEQNO\$" $FILENAME.strings -B2 -A9999 | grep "Generated by LVM2 version" -m1 -B9999 -A5 &> $VGNAME/$VGNAME.$SEQNO_NUMBER
+done; 
+
+# reset Internal Field Seperator
+IFS=$OLD_IFS
+
+# cleanup
+rm seqno_file
+
+PRINT "end of script" 
+
