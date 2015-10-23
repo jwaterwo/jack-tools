@@ -1,0 +1,2 @@
+# this will scan all devices on the system and check for pv uuids
+for DEVICE in $(awk '!/name/ {print $NF}' /proc/partitions); do PV_UUID=$(sudo dd if=/dev/$DEVICE count=10 bs=1M 2>/dev/null | strings | grep "LVM2 001" -m1 | sed 's|LVM2 001|''|g'); [[ ! -z $PV_UUID ]] && echo $DEVICE: $PV_UUID; done;
