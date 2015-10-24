@@ -1,2 +1,24 @@
+#!/bin/bash -   
+## title          : pv_uuid_scan.bsh
+## description    : scans all devices on system for LVM PVLABEL
+## author         : Jack Waterworth [jwaterworth@gmail.com]
+## date           : 20150811
+## version        : 1
+## usage          : ./pv_uuid_scan.bsh
+## notes          :        
+## bash_version   : 4.2.47(1)-release
+## project        : jack-tools
+## gitlab_url     : https://github.com/jwaterwo/jack-tools
+##============================================================================
+#
+# LVM will search the first 4 sectors of devices on the system looking for
+# PVLABEL to determine whether the device is part of the LVM stack or not.
+#
+# What happens when LVM cannot detect the UUID?
+#
+# This script will check the first X MB of the devices to see if a PVLABEL
+# is found ANYWHERE. Usefull if a partition has been deleted or moved.
+#
+
 # this will scan all devices on the system and check for pv uuids
 for DEVICE in $(awk '!/name/ {print $NF}' /proc/partitions); do PV_UUID=$(sudo dd if=/dev/$DEVICE count=10 bs=1M 2>/dev/null | strings | grep "LVM2 001" -m1 | sed 's|LVM2 001|''|g'); [[ ! -z $PV_UUID ]] && echo $DEVICE: $PV_UUID; done;
